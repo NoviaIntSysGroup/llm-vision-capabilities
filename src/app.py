@@ -3,9 +3,7 @@ import math
 from PIL import Image, ImageDraw, ImageFont
 from openai import OpenAI
 import streamlit as st
-from streamlit.runtime.scriptrunner import add_script_run_ctx
-from streamlit.runtime.scriptrunner.script_run_context import get_script_run_ctx
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode, MediaRecorderFactory
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 import base64
 import cv2
 from PIL import Image
@@ -14,24 +12,20 @@ import math
 import subprocess
 import os
 import time
-from dotenv import load_dotenv
-
-load_dotenv()
 
 st.set_page_config(layout="wide")
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 image_prompt = "You are an expert video narrator. Describe 1- surrounding and 2. what is happening. DO NOT EVER directly refer to it as 'image', 'photos', 'frames', 'seqence' or other synonyms. Sentences should be concise. Focus on continuity and cohesiveness of narration. Describe like you are observing with your own eyes and you are there. Maximum sentences: {max_sentence_length}"""
 
 narration_prompt = """You are an expert video narrator. Generate a coherent narration from given descriptions from chunks of the same video. Sentences should be short. Use simple english. If an entity is repeated mutliple times, assume its the same entity, focus on continuity. Do not EVER repeat same information. Maximum words: {max_word_length}"""
 
 
-def get_image_description(base64_image, image_prompt, max_sentence_length=2):
+def get_image_description(client, base64_image, image_prompt, max_sentence_length=2):
     """
     Generates a description of an image using OpenAI's API.
 
     Args:
+    client (OpenAI): OpenAI client.
     base64_image (str): Base64 blob of the image.
     image_prompt (str): Prompt for the image description.
 
@@ -68,7 +62,6 @@ def get_image_description(base64_image, image_prompt, max_sentence_length=2):
             max_tokens=300
         )
         description = response.choices[0].message.content
-        print(description)
         return description
 
     except Exception as e:
@@ -76,11 +69,20 @@ def get_image_description(base64_image, image_prompt, max_sentence_length=2):
         return None
 
 
-def generate_narration(descriptions, narration_prompt, max_word_length=100):
+def test_api_key(client):
+    try:
+        response = client.models.list()
+        return True
+    except Exception as e:
+        return False
+
+
+def generate_narration(client, descriptions, narration_prompt, max_word_length=100):
     """
     Generates a narration from a list of descriptions.
 
     Args:
+    client (OpenAI): OpenAI client.
     descriptions (list): List of descriptions.
     narration_prompt (str): Prompt for the narration.
 
@@ -120,11 +122,12 @@ def generate_narration(descriptions, narration_prompt, max_word_length=100):
         return None
 
 
-def get_audio(text):
+def get_audio(client, text):
     """
     Converts text to speech using OpenAI's API.
 
     Args:
+    client (OpenAI): OpenAI client.
     text (str): Text to be converted to speech.
 
     Returns:
@@ -215,8 +218,7 @@ def bytes_to_temp_file(bytes, suffix):
     # Save the bytes to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_file.write(bytes)
-        temp_file_path = temp_file.name
-    return temp_file_path
+        return temp_file.name
 
 
 def add_audio_to_video(video_path, audio_path):
@@ -243,8 +245,6 @@ def add_audio_to_video(video_path, audio_path):
     audio_duration = subprocess.check_output(
         ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
          '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]).strip()
-
-    print(video_duration, audio_duration)
 
     # Calculate the tempo adjustment factor
     duration_ratio = float(audio_duration) / float(video_duration)
@@ -441,40 +441,42 @@ def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_wid
 
         grids.append(grid)
 
-    # Clean up temporary video file
-    os.remove(temp_video_path)
+    # # Clean up temporary video file
+    # os.remove(temp_video_path)
 
-    return grids, video_duration
+    return grids, video_duration, temp_video_path
 
 
 class VideoProcessor(VideoProcessorBase):
 
     def __init__(self) -> None:
         self.frames = []
+        print("Recording Started")
 
     def recv(self, frame):
-        print("Received Frame")
-        self.ended = False
         img = frame.to_ndarray(format="bgr24")
         self.frames.append(img)
+        return frame
 
     def on_ended(self):
-        print("Recording Ended")
-        self.save_video()
-
-    def save_video(self, filename="webcam_video.avi"):
+        filename = "webcam_video.avi"
         # Remove the existing video file if it exists
         if os.path.exists(filename):
             os.remove(filename)
 
-        # Create a temporary file to store the video
-        with cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'MJPG'), 20.0, self.frames[0].shape) as out:
-            for frame in self.frames:
-                out.write(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        # Create a file to store the video
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        out = cv2.VideoWriter(filename, fourcc, 30.0,
+                              self.frames[0].shape[:2][::-1])
+        for frame in self.frames:
+            out.write(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        out.release()
+
+        print("Recording Ended")
+        print("Video saved to", filename)
 
 
 def get_webcam_video():
-    video_file = None
     # Initialize video recorder
     webrtc_ctx = webrtc_streamer(
         key="webcam-video",
@@ -482,18 +484,15 @@ def get_webcam_video():
         media_stream_constraints={"video": True, "audio": False},
     )
 
-    if os.path.exists("webcam_video.avi") and not webrtc_ctx.state.playing:
-        st.video("webcam_video.avi")
 
-
-def video_processor(filename, video_stream):
+def video_processor(client, filename, video_stream):
     process_start_time = time.time()
     with st.status(label='Processing Video...', expanded=False) as status:
         try:
             # 2. Frame Extraction and Image Grid Creation
             status.update(
                 label="Sampling Video Frames...", expanded=False)
-            grids, video_duration = extract_frames_and_create_grids1(
+            grids, video_duration, temp_video_path = extract_frames_and_create_grids1(
                 video_stream=video_stream,
                 rows=4,
                 columns=4,
@@ -508,9 +507,8 @@ def video_processor(filename, video_stream):
                 label="Generating Narration...", expanded=True)
             description_start_time = time.time()
             max_sentence_length = math.ceil(video_duration / 5)
-            print("max_sentence_length", max_sentence_length)
             descriptions = [get_image_description(
-                image_to_base64(grid), image_prompt, max_sentence_length=max_sentence_length) for grid in grids]
+                client, image_to_base64(grid), image_prompt, max_sentence_length=max_sentence_length) for grid in grids]
             st.write(
                 f"Time taken for description generation: {(time.time()-description_start_time):.2f} seconds")
             st.write("Descriptions:", descriptions)
@@ -519,7 +517,7 @@ def video_processor(filename, video_stream):
             narration_start_time = time.time()
             max_word_length = math.ceil(video_duration * 4)
             narration = generate_narration(
-                descriptions, narration_prompt, max_word_length) if len(descriptions) > 1 else descriptions[0]
+                client, descriptions, narration_prompt, max_word_length) if len(descriptions) > 1 else descriptions[0]
             st.markdown(
                 f"__Time taken for narration generation:__ {(time.time()-narration_start_time):.2f} seconds")
 
@@ -530,17 +528,17 @@ def video_processor(filename, video_stream):
 
             # 4. Text-to-Speech Conversion
             status.update(label="Generating Audio...")
-            audio_path = get_audio(narration)
+            audio_path = get_audio(client, narration)
 
             status.update(
                 label="Finalizing Narrated Video...")
             # 5. Audio and Video Integration
             final_video = add_audio_to_video(
-                filename, audio_path)
+                temp_video_path, audio_path)
 
             if final_video:
                 status.update(label="Video processed successfully",
-                              state="complete")
+                              state="complete", expanded=False)
             else:
                 status.update(label="Error Processing Video",
                               state="error")
@@ -552,7 +550,7 @@ def video_processor(filename, video_stream):
         # 6. Display the final video
         st.video(final_video)
         st.download_button(
-            label="Download Video", data=final_video, file_name=f"{filename}_narrated.mp4")
+            label="Download Video", data=final_video, file_name=f"{os.path.splitext(filename)[0]}_narrated.mp4")
     st.write(
         f"Processing time: {(time.time() - process_start_time):.2f} seconds")
 
@@ -565,48 +563,58 @@ def main():
     # centered title
     st.markdown(
         "<h1 style='text-align: center;'>Video Narration Assistant</h1>", unsafe_allow_html=True)
+    api_key = st.text_input("Enter your OpenAI API Key",
+                            type="password", key="api_key")
+    if api_key:
+        # add two columns
+        col1, col2 = st.columns(2, gap="large")
 
-    # add two columns
-    col1, col2 = st.columns(2, gap="large")
+        # initialize states
+        video_stream = None
+        webcam_video_path = None
+        filename = None
+        video_file = None
 
-    # initialize states
-    video_stream = None
-    webcam_video_path = None
-    filename = None
-    video_file = None
-    st.session_state.event = 0
-    st.session_state.video_frames = []
-    st.session_state.video_recorded = False
+        # Initialize OpenAI client
+        client = OpenAI(api_key=api_key)
+        if not test_api_key(client):
+            st.error("Invalid API Key")
+            return
 
-    with col1:
-        # Video Upload
-        st.subheader("Upload a Video")
-        video_file = st.file_uploader("Upload a Video", type=[
-            "mp4", "avi", "mov", "mkv"], label_visibility="hidden", on_change=lambda: change_event(0))
+        st.session_state.event = 0
+        st.session_state.video_frames = []
+        st.session_state.video_recorded = False
 
-        st.divider()
-        # Webcam recording functionality
-        st.subheader("Record from Webcam")
-        webcam_video_path = get_webcam_video()
-        if webcam_video_path:
-            st.video(webcam_video_path)
+        with col1:
+            # Video Upload
+            st.subheader("Upload a Video")
+            video_file = st.file_uploader("Upload a Video", type=[
+                "mp4", "avi", "mov", "mkv"], label_visibility="hidden", on_change=lambda: change_event(0))
 
-    # with col2:
-    #     if video_file and st.session_state.event == 0:
-    #         filename = video_file.name
-    #         video_stream = video_file.getvalue()
+            st.divider()
+            # Webcam recording functionality
+            st.subheader("Record from Webcam")
+            webcam_video_path = get_webcam_video()
+            if webcam_video_path:
+                st.video(webcam_video_path)
 
-    #     elif webcam_video_path and st.session_state.event == 1:
-    #         filename = "webcam_video"
-    #         video_stream = open(webcam_video_path, "rb").read()
+        with col2:
+            if video_file and st.session_state.event == 0:
+                filename = video_file.name
+                video_stream = video_file.getvalue()
 
-    #     if video_stream:
-    #         video_processor(filename, video_stream)
-    #     else:
-    #         st.markdown("<br/>"*9, unsafe_allow_html=True)
-    #         st.info("Upload a video or record from webcam to get started.")
+            elif webcam_video_path and st.session_state.event == 1:
+                filename = "webcam_video"
+                video_stream = open(webcam_video_path, "rb").read()
+
+            if video_stream:
+                video_processor(client, filename, video_stream)
+            else:
+                st.markdown("<br/>"*9, unsafe_allow_html=True)
+                st.info("Upload a video or record from webcam to get started.")
+    else:
+        st.info("Enter your OpenAI API Key to get started.")
 
 
 if __name__ == "__main__":
-    # asyncio.run(main())
     main()
