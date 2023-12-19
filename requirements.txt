@@ -1,0 +1,13 @@
+# General Packages
+pillow
+
+# LLM
+openai
+
+# UI
+streamlit
+streamlit-webrtc
+
+# Image Processing
+opencv-python
+scikit-image
