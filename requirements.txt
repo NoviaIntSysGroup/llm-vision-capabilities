@@ -1,14 +1,15 @@
 # General Packages
-pillow
-python-dotenv
+pillow==10.0.1
+python-dotenv==1.0.0
 
 # LLM
-openai
+openai==1.7.0
 
 # UI
-streamlit
+streamlit==1.28.2
 streamlit-webrtc
 
 # Image Processing
 opencv-python
-scikit-image
+scikit-image==0.22.0
+ffmpeg-downloader==0.3.0
