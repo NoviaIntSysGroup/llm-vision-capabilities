@@ -239,12 +239,12 @@ def add_audio_to_video(video_path, audio_path):
 
     # Run ffmpeg to get the duration of the video in seconds
     video_duration = subprocess.check_output(
-        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+        [ffdl.ffprobe_path, '-v', 'error', '-show_entries', 'format=duration',
          '-of', 'default=noprint_wrappers=1:nokey=1', video_path]).strip()
 
     # Run ffmpeg to get the duration of the audio in seconds
     audio_duration = subprocess.check_output(
-        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+        [ffdl.ffprobe_path, '-v', 'error', '-show_entries', 'format=duration',
          '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]).strip()
 
     # Calculate the tempo adjustment factor
@@ -257,7 +257,7 @@ def add_audio_to_video(video_path, audio_path):
 
     # Use ffmpeg to adjust audio speed and merge with video
     subprocess.call([
-        'ffmpeg', '-i', video_path, '-i', audio_path,
+        ffdl.ffmpeg_path, '-i', video_path, '-i', audio_path,
         '-filter_complex', f'[1:a]atempo={duration_ratio}[adjusted]',
         '-map', '0:v', '-map', '[adjusted]', '-c:v', 'copy',
         '-c:a', 'aac', '-strict', '-2', '-hide_banner', '-loglevel', 'error', temp_video.name, '-y'
@@ -373,7 +373,7 @@ def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_wid
 
     # Calculate video duration with ffmpeg
     video_duration = subprocess.check_output(
-        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+        [ffdl.ffprobe_path, '-v', 'error', '-show_entries', 'format=duration',
          '-of', 'default=noprint_wrappers=1:nokey=1', temp_video_path]).strip()
     video_duration = float(video_duration)
 
@@ -566,19 +566,22 @@ def main():
         "<h1 style='text-align: center;'>Video Narration Assistant</h1>", unsafe_allow_html=True)
 
     # install ffmpeg
-    try:
-        subprocess.run("ffmpeg -version",
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
-        print("FFmpeg not found. Installing FFmpeg:", e)
+    with st.spinner("Loading FFmpeg..."):
+        import time
+        time.sleep(10)
         try:
-            subprocess.run("ffdl install -y",
+            subprocess.run(f"{ffdl.ffmpeg_path} -version",
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except:
-            print("FFmpeg installation failed:", e)
-            st.info(
-                "FFmpeg installation failed. Please install FFmpeg manually.")
-            return
+        except Exception as e:
+            print("FFmpeg not found. Installing FFmpeg:", e)
+            try:
+                subprocess.run("ffdl install -y",
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except:
+                print("FFmpeg installation failed:", e)
+                st.info(
+                    "FFmpeg installation failed. Please install FFmpeg manually.")
+                return
 
     api_key = st.text_input("Enter your OpenAI API Key",
                             type="password", key="api_key")
