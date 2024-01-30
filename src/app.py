@@ -567,8 +567,6 @@ def main():
 
     # install ffmpeg
     with st.spinner("Loading FFmpeg..."):
-        import time
-        time.sleep(10)
         try:
             subprocess.run(f"{ffdl.ffmpeg_path} -version",
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
