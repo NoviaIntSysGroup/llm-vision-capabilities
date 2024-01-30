@@ -12,6 +12,7 @@ import math
 import subprocess
 import os
 import time
+import ffmpeg_downloader as ffdl
 
 st.set_page_config(layout="wide")
 
@@ -563,6 +564,22 @@ def main():
     # centered title
     st.markdown(
         "<h1 style='text-align: center;'>Video Narration Assistant</h1>", unsafe_allow_html=True)
+
+    # install ffmpeg
+    try:
+        subprocess.run("ffmpeg -version",
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print("FFmpeg not found. Installing FFmpeg:", e)
+        try:
+            subprocess.run("ffdl install -y",
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except:
+            print("FFmpeg installation failed:", e)
+            st.info(
+                "FFmpeg installation failed. Please install FFmpeg manually.")
+            return
+
     api_key = st.text_input("Enter your OpenAI API Key",
                             type="password", key="api_key")
     if api_key:
