@@ -7,9 +7,9 @@ openai==1.7.0
 
 # UI
 streamlit==1.28.2
-streamlit-webrtc
+streamlit-webrtc==0.47.1
 
 # Image Processing
-opencv-python
+opencv-python==4.9.0.80
 scikit-image==0.22.0
 ffmpeg-downloader==0.3.0
