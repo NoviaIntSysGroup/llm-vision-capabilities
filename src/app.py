@@ -593,10 +593,10 @@ def main():
 
             st.divider()
             # Webcam recording functionality
-            st.subheader("Record from Webcam")
-            webcam_video_path = get_webcam_video()
-            if webcam_video_path:
-                st.video(webcam_video_path)
+            # st.subheader("Record from Webcam")
+            # webcam_video_path = get_webcam_video()
+            # if webcam_video_path:
+            #     st.video(webcam_video_path)
 
         with col2:
             if video_file and st.session_state.event == 0:
@@ -610,8 +610,8 @@ def main():
             if video_stream:
                 video_processor(client, filename, video_stream)
             else:
-                st.markdown("<br/>"*9, unsafe_allow_html=True)
-                st.info("Upload a video or record from webcam to get started.")
+                st.markdown("<br/>"*3, unsafe_allow_html=True)
+                st.info("Upload a video to get started.")
     else:
         st.info("Enter your OpenAI API Key to get started.")
 
