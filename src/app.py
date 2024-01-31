@@ -349,7 +349,7 @@ def extract_frames_and_create_grids(video_stream, rows=3, columns=3, sample_inte
     return grids, float(video_duration)
 
 
-def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_width=10, similarity_threshold=0.3):
+def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_width=10, similarity_threshold=0.3, max_frames=504, min_frames=9):
     """
     Extracts frames from a video stream and creates image grids with a specified number of rows and columns.
     Only samples frames that are significantly different from the previous frame.
@@ -362,6 +362,8 @@ def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_wid
     columns (int): Number of columns in each grid.
     border_width (int): Width of the border around each image.
     similarity_threshold (float): Threshold for frame similarity (lower values mean more difference is required).
+    max_frames (int): Maximum number of frames to extract.
+    min_frames (int): Minimum number of frames to extract.
 
     Returns:
     (list, float): List of image grids and video duration in seconds.
@@ -391,7 +393,7 @@ def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_wid
     image_height = 240
     while True:
         success, frame = video.read()
-        if not success:
+        if not success or sequence_number > max_frames:
             break
 
         frame_resized = cv2.resize(frame, (image_width, image_height))
@@ -403,7 +405,7 @@ def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_wid
             prev_frame_gray = cv2.cvtColor(previous_frame, cv2.COLOR_BGR2GRAY)
             s = ssim(frame_gray, prev_frame_gray)
 
-            if s > similarity_threshold:
+            if s > similarity_threshold and len(frames) >= min_frames:
                 continue  # Skip this frame, not different enough
 
         previous_frame = frame_rgb
@@ -420,6 +422,11 @@ def extract_frames_and_create_grids1(video_stream, rows=3, columns=3, border_wid
 
         frames.append(pil_frame)
         sequence_number += 1
+
+        # Adjust similarity threshold to ensure minimum frames are extracted
+        if len(frames) < min_frames and sequence_number > max_frames // 2:
+            similarity_threshold += 0.05
+            similarity_threshold = min(similarity_threshold, 0.8)
 
     # Release the video object
     video.release()
@@ -486,74 +493,95 @@ def get_webcam_video():
     )
 
 
-def video_processor(client, filename, video_stream):
+def video_processor(client, filename, video_stream, col1, col2):
     process_start_time = time.time()
-    with st.status(label='Processing Video...', expanded=False) as status:
-        try:
-            # 2. Frame Extraction and Image Grid Creation
-            status.update(
-                label="Sampling Video Frames...", expanded=False)
-            grids, video_duration, temp_video_path = extract_frames_and_create_grids1(
-                video_stream=video_stream,
-                rows=4,
-                columns=4,
-            )
 
-            for grid in grids:
-                st.image(
-                    f"data:image/jpeg;base64,{image_to_base64(grid)}")
+    with col1:
+        max_frames = st.number_input(
+            "Maximum number of frames to extract", min_value=504, max_value=1008, value=504, step=9) or 504
+        min_frames = st.number_input(
+            "Minimum number of frames to extract", min_value=9, max_value=504, value=9, step=9) or 9
+        similarity_threshold = st.number_input(
+            "Similarity threshold", min_value=0.1, max_value=0.8, value=0.3, step=0.01) or 0.3
 
-            # 3. Narration Generation
-            status.update(
-                label="Generating Narration...", expanded=True)
-            description_start_time = time.time()
-            max_sentence_length = math.ceil(video_duration / 5)
-            descriptions = [get_image_description(
-                client, image_to_base64(grid), image_prompt, max_sentence_length=max_sentence_length) for grid in grids]
+    def execute_narration_pipeline():
+        with col2:
+            with st.status(label='Processing Video...', expanded=False) as status:
+                try:
+                    # 2. Frame Extraction and Image Grid Creation
+                    status.update(
+                        label="Sampling Video Frames...", expanded=False)
+                    grids, video_duration, temp_video_path = extract_frames_and_create_grids1(
+                        video_stream=video_stream,
+                        rows=4,
+                        columns=4,
+                        max_frames=max_frames,
+                        min_frames=min_frames,
+                        similarity_threshold=similarity_threshold
+                    )
+
+                    for grid in grids:
+                        st.image(
+                            f"data:image/jpeg;base64,{image_to_base64(grid)}")
+
+                    def generate_narration_callback():
+                        # 3. Narration Generation
+                        status.update(
+                            label="Generating Narration...", expanded=False)
+                        description_start_time = time.time()
+                        max_sentence_length = math.ceil(video_duration / 5)
+                        descriptions = [get_image_description(
+                            client, image_to_base64(grid), image_prompt, max_sentence_length=max_sentence_length) for grid in grids]
+                        with col2:
+                            st.write(
+                                f"Time taken for description generation: {(time.time()-description_start_time):.2f} seconds")
+                            st.write("Descriptions:", descriptions)
+
+                        # max words based on video duration assuming 4 words per second
+                        narration_start_time = time.time()
+                        max_word_length = math.ceil(video_duration * 4)
+                        narration = generate_narration(
+                            client, descriptions, narration_prompt, max_word_length) if len(descriptions) > 1 else descriptions[0]
+                        # if the word length in narration are more than max_word_length, trim at the last full stop
+                        narration = trim_sentence(
+                            narration, max_word_length)
+                        with col2:
+                            st.markdown(
+                                f"__Time taken for narration generation:__ {(time.time()-narration_start_time):.2f} seconds")
+                            st.markdown(f"__Narration:__ {narration}")
+
+                        # 4. Text-to-Speech Conversion
+                        status.update(label="Generating Audio...")
+                        audio_path = get_audio(client, narration)
+
+                        status.update(
+                            label="Finalizing Narrated Video...")
+                        # 5. Audio and Video Integration
+                        final_video = add_audio_to_video(
+                            temp_video_path, audio_path)
+
+                        if final_video:
+                            status.update(label="Video processed successfully",
+                                          state="complete", expanded=False)
+                            with col2:
+                                st.video(final_video)
+                                st.download_button(
+                                    label="Download Video", data=final_video, file_name=f"{os.path.splitext(filename)[0]}_narrated.mp4")
+                        else:
+                            status.update(label="Error Processing Video",
+                                          state="error")
+                    with col2:
+                        st.button("Generate Narration",
+                                  on_click=generate_narration_callback)
+
+                except Exception as e:
+                    status.update(label="Error Processing Video",
+                                  state="error")
+                    raise e
             st.write(
-                f"Time taken for description generation: {(time.time()-description_start_time):.2f} seconds")
-            st.write("Descriptions:", descriptions)
-
-            # max words based on video duration assuming 4 words per second
-            narration_start_time = time.time()
-            max_word_length = math.ceil(video_duration * 4)
-            narration = generate_narration(
-                client, descriptions, narration_prompt, max_word_length) if len(descriptions) > 1 else descriptions[0]
-            st.markdown(
-                f"__Time taken for narration generation:__ {(time.time()-narration_start_time):.2f} seconds")
-
-            # if the word length in narration are more than max_word_length, trim at the last full stop
-            narration = trim_sentence(narration, max_word_length)
-
-            st.markdown(f"__Narration:__ {narration}")
-
-            # 4. Text-to-Speech Conversion
-            status.update(label="Generating Audio...")
-            audio_path = get_audio(client, narration)
-
-            status.update(
-                label="Finalizing Narrated Video...")
-            # 5. Audio and Video Integration
-            final_video = add_audio_to_video(
-                temp_video_path, audio_path)
-
-            if final_video:
-                status.update(label="Video processed successfully",
-                              state="complete", expanded=False)
-            else:
-                status.update(label="Error Processing Video",
-                              state="error")
-        except Exception as e:
-            status.update(label="Error Processing Video",
-                          state="error")
-            raise e
-    if final_video:
-        # 6. Display the final video
-        st.video(final_video)
-        st.download_button(
-            label="Download Video", data=final_video, file_name=f"{os.path.splitext(filename)[0]}_narrated.mp4")
-    st.write(
-        f"Processing time: {(time.time() - process_start_time):.2f} seconds")
+                f"Processing time: {(time.time() - process_start_time):.2f} seconds")
+    with col1:
+        st.button("Process Video", on_click=execute_narration_pipeline)
 
 
 def change_event(value):
@@ -626,7 +654,7 @@ def main():
                 video_stream = open(webcam_video_path, "rb").read()
 
             if video_stream:
-                video_processor(client, filename, video_stream)
+                video_processor(client, filename, video_stream, col1, col2)
             else:
                 st.markdown("<br/>"*3, unsafe_allow_html=True)
                 st.info("Upload a video to get started.")
