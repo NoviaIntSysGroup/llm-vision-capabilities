@@ -39,3 +39,17 @@ cd src
 
 streamlit run app.py
 ```
+
+## Using the App
+
+1. Input the OpenAI API key.
+2. Upload the video file.
+3. Select the parameters:
+    - Max Frames: The maximum number of frames to extract from the video. This is mostly relevant for longer videos.
+    - Min Frames: The minimum number of frames to extract from the video. This is mostly relevant for shorter videos.
+    - Similarity Threshold: The threshold for similarity between the video frames. This is used for selecting video frames. A higher threshold means more similar frames are selected.
+4. Click the 'Process Video' button.
+5. You can see the selected frames in the dropdown.
+6. Once you are satisfied with the selected frames based on the parameters, click the 'Generate Narration' button.
+7. The narration text, along with the narrated video, will be displayed.
+8. Download the narrated video by clicking the 'Download Video' button.
